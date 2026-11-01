@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>同词相遇 - 双人脑回路联机游戏</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <script>if (!window.Peer) { document.write('<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"><\\/script>'); }</script>
   <style>
     body {
       background-color: #f7f6f2;
@@ -273,6 +274,40 @@
       document.getElementById(id).classList.remove('hidden');
     }
 
+    // 网络状态及超时控制
+    let connectionTimeout = null;
+    function clearConnectionTimeout() {
+      if (connectionTimeout) clearTimeout(connectionTimeout);
+      connectionTimeout = null;
+    }
+    function resetConnectButton() {
+      const btn = document.getElementById(isHost ? 'btnCreate' : 'btnJoin');
+      btn.disabled = false;
+      btn.textContent = isHost ? '创建双人房间（我是房主）' : '加入房间';
+    }
+    function connectionFailed(message) {
+      clearConnectionTimeout();
+      resetConnectButton();
+      setConnBadge('连接失败', 'bg-red-100 text-red-600');
+      alert(message);
+      try { if (conn) conn.close(); } catch (e) {}
+      try { if (peer) peer.destroy(); } catch (e) {}
+      conn = null;
+      peer = null;
+    }
+    function beginConnectionTimeout() {
+      clearConnectionTimeout();
+      connectionTimeout = setTimeout(() => {
+        connectionFailed('连接超时：请确认双方网络正常、房主保持网页打开，并重新创建房间。如果跨运营商持续失败，可能需要 TURN 中继服务。');
+      }, 15000);
+    }
+    function newGamePeer(id) {
+      if (typeof Peer === 'undefined') {
+        throw new Error('PeerJS 脚本未加载，请更换网络后刷新页面');
+      }
+      return id ? new Peer(id, { debug: 1 }) : new Peer({ debug: 1 });
+    }
+
     // 房主创建房间
     function createRoom() {
       myName = document.getElementById('nicknameInput').value.trim() || '玩家A';
@@ -283,8 +318,10 @@
       btn.disabled = true;
       btn.textContent = '正在创建房间...';
 
-      peer = new Peer('WM-' + roomCode);
+      try { peer = newGamePeer('WM-' + roomCode); } catch (e) { connectionFailed(e.message); return; }
+      beginConnectionTimeout();
       peer.on('open', () => {
+        clearConnectionTimeout();
         setConnBadge('房间已创建 · 等待好友', 'bg-indigo-100 text-indigo-700');
         state.hostName = myName;
         state.guestConnected = false;
@@ -299,9 +336,7 @@
       });
 
       peer.on('error', (err) => {
-        alert('创建房间失败，请重试：' + err.type);
-        btn.disabled = false;
-        btn.textContent = '创建双人房间（我是房主）';
+        connectionFailed('创建房间失败：' + (err.type || err.message) + '。请检查网络后重试。');
       });
     }
 
@@ -320,21 +355,21 @@
       btn.disabled = true;
       btn.textContent = '连接中...';
 
-      peer = new Peer();
+      try { peer = newGamePeer(); } catch (e) { connectionFailed(e.message); return; }
+      beginConnectionTimeout();
       peer.on('open', () => {
         conn = peer.connect('WM-' + roomCode, { reliable: true });
         setupConnectionHandlers();
       });
 
-      peer.on('error', () => {
-        alert('找不到该房间或连接失败，请确认 6 位房间号是否正确');
-        btn.disabled = false;
-        btn.textContent = '加入房间';
+      peer.on('error', (err) => {
+        connectionFailed('连接服务出错：' + (err.type || err.message) + '。请确认房间号、房主在线状态及网络连接。');
       });
     }
 
     function setupConnectionHandlers() {
       conn.on('open', () => {
+        clearConnectionTimeout();
         setConnBadge('双人已实时联机', 'bg-emerald-100 text-emerald-700');
         if (!isHost) {
           showSection('viewLobby');
@@ -346,7 +381,12 @@
         handleMessage(data);
       });
 
+      conn.on('error', (err) => {
+        connectionFailed('房间连接失败：' + (err.type || err.message || '网络不可用') + '。请重新加入。');
+      });
+
       conn.on('close', () => {
+        clearConnectionTimeout();
         setConnBadge('对方已断开连接', 'bg-red-100 text-red-600');
         stopTimer();
       });
