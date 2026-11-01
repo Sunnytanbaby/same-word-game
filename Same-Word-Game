@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>同词相遇 - 双人脑回路联机游戏</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    body {
+      background-color: #f7f6f2;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    .word-left {
+      background-color: #ebe4ff;
+      color: #4c3b85;
+    }
+    .word-right {
+      background-color: #dff5ec;
+      color: #2c6e58;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-gray-800 pb-12">
+
+  <div class="max-w-md mx-auto min-h-screen flex flex-col px-4 pt-6">
+    <!-- 顶部标题栏 -->
+    <div class="flex items-center justify-between mb-4">
+      <span class="text-xs font-semibold text-gray-500 tracking-wider">同词相遇</span>
+      <span id="connStatus" class="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">未连接</span>
+    </div>
+
+    <!-- 1. 首页大厅 -->
+    <div id="viewHome" class="space-y-6 my-auto py-6">
+      <div class="text-center space-y-2">
+        <h1 class="text-2xl font-bold text-gray-900">同词相遇</h1>
+        <p class="text-xs text-gray-500">双人实时输入词语 · 直到你们的脑回路完全重合</p>
+      </div>
+
+      <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 space-y-4">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">你的昵称</label>
+          <input id="nicknameInput" type="text" placeholder="输入昵称（如：玩家A）" maxlength="10"
+            class="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-500">
+        </div>
+
+        <button onclick="createRoom()" id="btnCreate"
+          class="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm transition shadow-sm">
+          创建双人房间（我是房主）
+        </button>
+
+        <div class="relative flex py-1 items-center">
+          <div class="flex-grow border-t border-gray-200"></div>
+          <span class="flex-shrink mx-3 text-xs text-gray-400">或者加入朋友的房间</span>
+          <div class="flex-grow border-t border-gray-200"></div>
+        </div>
+
+        <div class="flex space-x-2">
+          <input id="roomCodeInput" type="text" placeholder="输入6位房间码" maxlength="6"
+            class="flex-1 px-3.5 py-2.5 rounded-xl border border-gray-200 text-sm uppercase tracking-widest focus:outline-none focus:border-emerald-500">
+          <button onclick="joinRoom()" id="btnJoin"
+            class="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm transition">
+            加入房间
+          </button>
+        </div>
+      </div>
+
+      <!-- 本地历史真实对局记录 -->
+      <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-sm font-bold text-gray-800">历史通关战绩</h2>
+          <button onclick="clearSavedGames()" class="text-xs text-gray-400 hover:text-red-500">清空记录</button>
+        </div>
+        <div id="savedGamesList" class="space-y-2 text-xs text-gray-500">
+          暂无历史对局，快和朋友开始第一局吧！
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 房间等待大厅（双方都到场才开始） -->
+    <div id="viewLobby" class="hidden space-y-5 my-auto py-6">
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 text-center space-y-4">
+        <div class="text-xs text-gray-400">房间号（点击复制发给朋友）</div>
+        <div onclick="copyRoomCode()" id="lobbyRoomCode"
+          class="text-3xl font-mono font-bold tracking-widest text-indigo-600 bg-indigo-50 py-3 rounded-xl cursor-pointer select-all">
+          ------
+        </div>
+        <p id="copyTip" class="text-[11px] text-gray-400">双方都进入房间并准备后，才会开始倒计时</p>
+
+        <div class="grid grid-cols-2 gap-3 pt-2">
+          <div class="p-3.5 rounded-xl word-left flex flex-col items-center space-y-1">
+            <span class="text-[10px] opacity-75">左方（房主）</span>
+            <span id="hostNameText" class="font-bold text-sm truncate max-w-full">等待中...</span>
+            <span id="hostReadyBadge" class="text-[11px] px-2 py-0.5 rounded-full bg-white/60">已就绪</span>
+          </div>
+          <div class="p-3.5 rounded-xl word-right flex flex-col items-center space-y-1">
+            <span class="text-[10px] opacity-75">右方（好友）</span>
+            <span id="guestNameText" class="font-bold text-sm truncate max-w-full">等待加入...</span>
+            <span id="guestReadyBadge" class="text-[11px] px-2 py-0.5 rounded-full bg-white/60">未到场</span>
+          </div>
+        </div>
+
+        <div class="pt-3">
+          <button id="btnLobbyAction" onclick="handleLobbyAction()" disabled
+            class="w-full py-3 rounded-xl bg-gray-300 text-gray-500 font-medium text-sm transition">
+            等待好友加入房间 (1/2)...
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. 游戏中与实时历史记录视图 -->
+    <div id="viewGame" class="hidden space-y-4">
+      <!-- 状态与倒计时卡片 -->
+      <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 space-y-4">
+        <div class="flex justify-between items-center">
+          <span id="roundTitle" class="text-sm font-bold text-gray-800">第 1 轮</span>
+          <span id="timerBadge" class="text-sm font-mono font-bold px-3 py-1 rounded-full bg-amber-50 text-amber-600">
+            60s
+          </span>
+        </div>
+
+        <!-- 输入阶段 -->
+        <div id="inputPhaseBox" class="space-y-3">
+          <div class="flex justify-between text-xs text-gray-500">
+            <span id="myStatusText">请输入你本轮想到的词语</span>
+            <span id="peerStatusText" class="text-indigo-600">对方正在思考...</span>
+          </div>
+          <div class="flex space-x-2">
+            <input id="wordInput" type="text" placeholder="输入本轮词语..." maxlength="20"
+              class="flex-1 px-3.5 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:border-indigo-500">
+            <button id="btnConfirmWord" onclick="confirmMyWord()"
+              class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm transition">
+              确认词语
+            </button>
+          </div>
+        </div>
+
+        <!-- 公示与判定相似阶段 -->
+        <div id="revealPhaseBox" class="hidden space-y-4 pt-1">
+          <div class="text-center text-xs text-gray-500">双方已确认，本轮词语公示：</div>
+          <div class="grid grid-cols-2 gap-3 text-center">
+            <div class="p-3 rounded-xl word-left">
+              <div id="revealHostName" class="text-[10px] opacity-70 mb-1">房主</div>
+              <div id="revealHostWord" class="font-bold text-sm break-all">--</div>
+            </div>
+            <div class="p-3 rounded-xl word-right">
+              <div id="revealGuestName" class="text-[10px] opacity-70 mb-1">好友</div>
+              <div id="revealGuestWord" class="font-bold text-sm break-all">--</div>
+            </div>
+          </div>
+
+          <!-- 相似判定按钮区 -->
+          <div id="voteActionArea" class="space-y-2">
+            <p class="text-center text-xs text-gray-500">
+              你们觉得这两个词相似/接近吗？（需双方都点相似才解锁下一步，若觉得不匹配则直接进入下一轮）
+            </p>
+            <div class="grid grid-cols-2 gap-3">
+              <button id="btnVoteNo" onclick="submitVote(false)"
+                class="py-2.5 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 text-xs font-medium transition">
+                × 不匹配，开始下一轮
+              </button>
+              <button id="btnVoteYes" onclick="submitVote(true)"
+                class="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition">
+                ✓ 词语相似 (<span id="similarCountText">0/2</span>)
+              </button>
+            </div>
+          </div>
+
+          <!-- 双方都点击相似后的下一步骤 -->
+          <div id="similarSuccessArea" class="hidden bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-center space-y-2.5">
+            <div class="text-xs font-bold text-emerald-800">⚡ 双方都觉得词语相似！请决定下一步骤：</div>
+            <div class="grid grid-cols-2 gap-2">
+              <button onclick="requestNextRoundAfterSimilar()"
+                class="py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium">
+                以此为线索继续猜直到一模一样
+              </button>
+              <button onclick="requestFinishNow()"
+                class="py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium">
+                直接算作相遇通关
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 下半部分：本局历史轮数与猜过的词语记录 -->
+      <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+        <div class="text-xs font-bold text-gray-500 mb-3">本局历史猜测记录</div>
+        <div id="liveHistoryContainer" class="space-y-3">
+          <div class="text-center text-xs text-gray-400 py-4">第 1 轮结束后将在此处展示双方历史词汇</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 结束结算长图视图（还原截图样式） -->
+    <div id="viewSummary" class="hidden space-y-4">
+      <div class="bg-[#f7f6f2] rounded-2xl p-5 border border-gray-200 shadow-sm">
+        <div class="text-center space-y-1.5 mb-6">
+          <h2 class="text-xl font-bold text-gray-900">你们的脑回路相遇了</h2>
+          <p id="summarySubTitle" class="text-xs text-gray-600 font-medium"></p>
+          <p id="summaryMetaInfo" class="text-[11px] text-gray-400"></p>
+        </div>
+
+        <div id="summaryRoundsList" class="space-y-3"></div>
+      </div>
+
+      <div class="flex space-x-3">
+        <button onclick="backToHome()"
+          class="flex-1 py-3 rounded-xl bg-white border border-gray-200 text-gray-700 font-medium text-sm">
+          返回大厅
+        </button>
+        <button id="btnPlayAgain" onclick="playAgainInRoom()"
+          class="flex-1 py-3 rounded-xl bg-indigo-600 text-white font-medium text-sm">
+          再来一局
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 核心联机与游戏状态
+    let peer = null;
+    let conn = null;
+    let isHost = false;
+    let roomCode = '';
+    let myName = '';
+    let peerName = '';
+
+    let state = {
+      status: 'lobby', // lobby, playing, reveal, similar_step, finished
+      hostName: '房主',
+      guestName: '等待加入...',
+      guestConnected: false,
+      guestReady: false,
+      round: 1,
+      timeLeft: 60,
+      hostWord: '',
+      guestWord: '',
+      hostConfirmed: false,
+      guestConfirmed: false,
+      hostVote: null,
+      guestVote: null,
+      history: [], // { round, hostWord, guestWord, matched }
+      finalWord: '',
+      finishDate: ''
+    };
+
+    let timerInterval = null;
+
+    // 初始化加载历史保存记录
+    window.addEventListener('DOMContentLoaded', () => {
+      renderSavedGames();
+    });
+
+    function generateCode() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let res = '';
+      for (let i = 0; i < 6; i++) res += chars[Math.floor(Math.random() * chars.length)];
+      return res;
+    }
+
+    function setConnBadge(text, colorClass) {
+      const el = document.getElementById('connStatus');
+      el.textContent = text;
+      el.className = `text-xs px-2.5 py-0.5 rounded-full ${colorClass}`;
+    }
+
+    function showSection(id) {
+      ['viewHome', 'viewLobby', 'viewGame', 'viewSummary'].forEach(v => {
+        document.getElementById(v).classList.add('hidden');
+      });
+      document.getElementById(id).classList.remove('hidden');
+    }
+
+    // 房主创建房间
+    function createRoom() {
+      myName = document.getElementById('nicknameInput').value.trim() || '玩家A';
+      roomCode = generateCode();
+      isHost = true;
+
+      const btn = document.getElementById('btnCreate');
+      btn.disabled = true;
+      btn.textContent = '正在创建房间...';
+
+      peer = new Peer('WM-' + roomCode);
+      peer.on('open', () => {
+        setConnBadge('房间已创建 · 等待好友', 'bg-indigo-100 text-indigo-700');
+        state.hostName = myName;
+        state.guestConnected = false;
+        state.guestReady = false;
+        showSection('viewLobby');
+        updateLobbyUI();
+      });
+
+      peer.on('connection', (connection) => {
+        conn = connection;
+        setupConnectionHandlers();
+      });
+
+      peer.on('error', (err) => {
+        alert('创建房间失败，请重试：' + err.type);
+        btn.disabled = false;
+        btn.textContent = '创建双人房间（我是房主）';
+      });
+    }
+
+    // 好友加入房间
+    function joinRoom() {
+      myName = document.getElementById('nicknameInput').value.trim() || '玩家B';
+      const inputCode = document.getElementById('roomCodeInput').value.trim().toUpperCase();
+      if (inputCode.length !== 6) {
+        alert('请输入完整的 6 位房间码');
+        return;
+      }
+      roomCode = inputCode;
+      isHost = false;
+
+      const btn = document.getElementById('btnJoin');
+      btn.disabled = true;
+      btn.textContent = '连接中...';
+
+      peer = new Peer();
+      peer.on('open', () => {
+        conn = peer.connect('WM-' + roomCode, { reliable: true });
+        setupConnectionHandlers();
+      });
+
+      peer.on('error', () => {
+        alert('找不到该房间或连接失败，请确认 6 位房间号是否正确');
+        btn.disabled = false;
+        btn.textContent = '加入房间';
+      });
+    }
+
+    function setupConnectionHandlers() {
+      conn.on('open', () => {
+        setConnBadge('双人已实时联机', 'bg-emerald-100 text-emerald-700');
+        if (!isHost) {
+          showSection('viewLobby');
+          sendMsg({ type: 'JOIN', name: myName });
+        }
+      });
+
+      conn.on('data', (data) => {
+        handleMessage(data);
+      });
+
+      conn.on('close', () => {
+        setConnBadge('对方已断开连接', 'bg-red-100 text-red-600');
+        stopTimer();
+      });
+    }
+
+    function sendMsg(msg) {
+      if (conn && conn.open) {
+        conn.send(msg);
+      }
+    }
+
+    function syncStateToGuest() {
+      if (isHost) {
+        sendMsg({ type: 'SYNC_STATE', state });
+      }
+    }
+
+    function handleMessage(data) {
+      if (isHost) {
+        if (data.type === 'JOIN') {
+          state.guestName = data.name;
+          state.guestConnected = true;
+          state.guestReady = false;
+          updateLobbyUI();
+          syncStateToGuest();
+        } else if (data.type === 'GUEST_READY') {
+          state.guestReady = true;
+          updateLobbyUI();
+          syncStateToGuest();
+        } else if (data.type === 'SUBMIT_WORD') {
+          state.guestWord = data.word;
+          state.guestConfirmed = true;
+          checkBothConfirmed();
+          syncStateToGuest();
+          updateGameUI();
+        } else if (data.type === 'VOTE') {
+          state.guestVote = data.vote;
+          evaluateVotes();
+          syncStateToGuest();
+          updateGameUI();
+        } else if (data.type === 'NEXT_ROUND_AFTER_SIMILAR') {
+          proceedToNextRound();
+        } else if (data.type === 'FINISH_NOW') {
+          finishGame(state.hostWord + ' / ' + state.guestWord);
+        }
+      } else {
+        if (data.type === 'SYNC_STATE') {
+          const prevRound = state.round;
+          const prevStatus = state.status;
+          state = data.state;
+
+          if (state.status === 'lobby') {
+            showSection('viewLobby');
+            updateLobbyUI();
+          } else if (state.status === 'playing' || state.status === 'reveal' || state.status === 'similar_step') {
+            showSection('viewGame');
+            if (prevStatus !== 'playing' || prevRound !== state.round) {
+              if (state.status === 'playing' && !state.guestConfirmed) {
+                document.getElementById('wordInput').value = '';
+              }
+            }
+            updateGameUI();
+          } else if (state.status === 'finished') {
+            saveFinishedGameLocally();
+            renderSummaryView();
+            showSection('viewSummary');
+          }
+        }
+      }
+    }
+
+    // 等待大厅逻辑（确保双方都到场并准备才开始计时）
+    function updateLobbyUI() {
+      document.getElementById('lobbyRoomCode').textContent = roomCode;
+      document.getElementById('hostNameText').textContent = state.hostName;
+      document.getElementById('guestNameText').textContent = state.guestConnected ? state.guestName : '等待加入...';
+
+      const guestBadge = document.getElementById('guestReadyBadge');
+      if (!state.guestConnected) {
+        guestBadge.textContent = '未到场';
+        guestBadge.className = 'text-[11px] px-2 py-0.5 rounded-full bg-white/60 text-gray-500';
+      } else if (state.guestReady) {
+        guestBadge.textContent = '已准备';
+        guestBadge.className = 'text-[11px] px-2 py-0.5 rounded-full bg-emerald-600 text-white';
+      } else {
+        guestBadge.textContent = '已入座 · 未准备';
+        guestBadge.className = 'text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700';
+      }
+
+      const btn = document.getElementById('btnLobbyAction');
+      if (isHost) {
+        if (!state.guestConnected) {
+          btn.disabled = true;
+          btn.textContent = '等待好友加入房间 (1/2)...';
+          btn.className = 'w-full py-3 rounded-xl bg-gray-200 text-gray-400 font-medium text-sm';
+        } else if (!state.guestReady) {
+          btn.disabled = true;
+          btn.textContent = '好友已进房，等待对方点击准备...';
+          btn.className = 'w-full py-3 rounded-xl bg-amber-100 text-amber-700 font-medium text-sm';
+        } else {
+          btn.disabled = false;
+          btn.textContent = '双方已就绪！立即开始第 1 轮';
+          btn.className = 'w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm shadow-sm';
+        }
+      } else {
+        if (!state.guestReady) {
+          btn.disabled = false;
+          btn.textContent = '我已准备好，点击准备';
+          btn.className = 'w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm shadow-sm';
+        } else {
+          btn.disabled = true;
+          btn.textContent = '已准备，等待房主开始游戏...';
+          btn.className = 'w-full py-3 rounded-xl bg-gray-200 text-gray-500 font-medium text-sm';
+        }
+      }
+    }
+
+    function handleLobbyAction() {
+      if (isHost) {
+        if (state.guestConnected && state.guestReady) {
+          startNewGame();
+        }
+      } else {
+        state.guestReady = true;
+        updateLobbyUI();
+        sendMsg({ type: 'GUEST_READY' });
+      }
+    }
+
+    function copyRoomCode() {
+      navigator.clipboard?.writeText(roomCode);
+      document.getElementById('copyTip').textContent = '✅ 房间号已复制！快发给朋友加入吧';
+    }
+
+    // 房主开启新对局
+    function startNewGame() {
+      state.status = 'playing';
+      state.round = 1;
+      state.history = [];
+      resetRoundState();
+      showSection('viewGame');
+      document.getElementById('wordInput').value = '';
+      startHostTimer();
+      syncStateToGuest();
+      updateGameUI();
+    }
+
+    function resetRoundState() {
+      state.timeLeft = 60;
+      state.hostWord = '';
+      state.guestWord = '';
+      state.hostConfirmed = false;
+      state.guestConfirmed = false;
+      state.hostVote = null;
+      state.guestVote = null;
+    }
+
+    function startHostTimer() {
+      stopTimer();
+      timerInterval = setInterval(() => {
+        if (state.status !== 'playing') {
+          stopTimer();
+          return;
+        }
+        state.timeLeft--;
+        if (state.timeLeft <= 0) {
+          state.timeLeft = 0;
+          if (!state.hostConfirmed) {
+            const currentInput = document.getElementById('wordInput').value.trim();
+            state.hostWord = currentInput || '未作答';
+            state.hostConfirmed = true;
+          }
+          if (!state.guestConfirmed) {
+            state.guestWord = state.guestWord || '未作答';
+            state.guestConfirmed = true;
+          }
+          checkBothConfirmed();
+        }
+        syncStateToGuest();
+        updateGameUI();
+      }, 1000);
+    }
+
+    function stopTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+    }
+
+    // 玩家点击确认词语
+    function confirmMyWord() {
+      const val = document.getElementById('wordInput').value.trim() || '未作答';
+      if (isHost) {
+        state.hostWord = val;
+        state.hostConfirmed = true;
+        checkBothConfirmed();
+        syncStateToGuest();
+        updateGameUI();
+      } else {
+        state.guestWord = val;
+        state.guestConfirmed = true;
+        updateGameUI();
+        sendMsg({ type: 'SUBMIT_WORD', word: val });
+      }
+    }
+
+    // 检查是否双方都已确认词语（立即公示）
+    function checkBothConfirmed() {
+      if (state.hostConfirmed && state.guestConfirmed) {
+        stopTimer();
+        // 如果双方输入的词语完全一模一样（且不是未作答），直接判定脑回路相遇成功！
+        if (state.hostWord === state.guestWord && state.hostWord !== '未作答') {
+          state.history.push({
+            round: state.round,
+            hostWord: state.hostWord,
+            guestWord: state.guestWord,
+            matched: true
+          });
+          finishGame(state.hostWord);
+        } else {
+          state.status = 'reveal';
+        }
+      }
+    }
+
+    // 提交是否相似的判定
+    function submitVote(isSimilar) {
+      if (isHost) {
+        state.hostVote = isSimilar;
+        evaluateVotes();
+        syncStateToGuest();
+        updateGameUI();
+      } else {
+        state.guestVote = isSimilar;
+        updateGameUI();
+        sendMsg({ type: 'VOTE', vote: isSimilar });
+      }
+    }
+
+    function evaluateVotes() {
+      // 任意一方点击“不匹配”，立即记录本轮并自动开始下一轮
+      if (state.hostVote === false || state.guestVote === false) {
+        proceedToNextRound();
+        return;
+      }
+      // 双方都点击“相似”，进入下一步骤
+      if (state.hostVote === true && state.guestVote === true) {
+        state.status = 'similar_step';
+      }
+    }
+
+    function proceedToNextRound() {
+      state.history.push({
+        round: state.round,
+        hostWord: state.hostWord,
+        guestWord: state.guestWord,
+        matched: false
+      });
+      state.round++;
+      state.status = 'playing';
+      resetRoundState();
+      document.getElementById('wordInput').value = '';
+      startHostTimer();
+      syncStateToGuest();
+      updateGameUI();
+    }
+
+    function requestNextRoundAfterSimilar() {
+      if (isHost) {
+        proceedToNextRound();
+      } else {
+        sendMsg({ type: 'NEXT_ROUND_AFTER_SIMILAR' });
+      }
+    }
+
+    function requestFinishNow() {
+      if (isHost) {
+        state.history.push({
+          round: state.round,
+          hostWord: state.hostWord,
+          guestWord: state.guestWord,
+          matched: true
+        });
+        finishGame(state.hostWord + ' / ' + state.guestWord);
+      } else {
+        sendMsg({ type: 'FINISH_NOW' });
+      }
+    }
+
+    function finishGame(finalWord) {
+      stopTimer();
+      state.status = 'finished';
+      state.finalWord = finalWord;
+      const now = new Date();
+      state.finishDate = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`;
+      saveFinishedGameLocally();
+      syncStateToGuest();
+      renderSummaryView();
+      showSection('viewSummary');
+    }
+
+    // 更新游戏界面与下半部分实时历史记录
+    function updateGameUI() {
+      document.getElementById('roundTitle').textContent = `第 ${state.round} 轮`;
+      document.getElementById('timerBadge').textContent = `${state.timeLeft}s`;
+
+      const inputBox = document.getElementById('inputPhaseBox');
+      const revealBox = document.getElementById('revealPhaseBox');
+      const voteArea = document.getElementById('voteActionArea');
+      const similarArea = document.getElementById('similarSuccessArea');
+
+      if (state.status === 'playing') {
+        inputBox.classList.remove('hidden');
+        revealBox.classList.add('hidden');
+
+        const iConfirmed = isHost ? state.hostConfirmed : state.guestConfirmed;
+        const peerConfirmed = isHost ? state.guestConfirmed : state.hostConfirmed;
+
+        document.getElementById('wordInput').disabled = iConfirmed;
+        const btnConfirm = document.getElementById('btnConfirmWord');
+        btnConfirm.disabled = iConfirmed;
+        btnConfirm.textContent = iConfirmed ? '已确认' : '确认词语';
+        btnConfirm.className = iConfirmed
+          ? 'px-5 py-2.5 rounded-xl bg-gray-200 text-gray-500 font-medium text-sm'
+          : 'px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm transition';
+
+        document.getElementById('myStatusText').textContent = iConfirmed ? '你已确认词语，等待对方确认后立即公示' : '请输入你本轮想到的词语';
+        document.getElementById('peerStatusText').textContent = peerConfirmed ? '✓ 对方已确认词语' : '对方正在输入...';
+      } else if (state.status === 'reveal' || state.status === 'similar_step') {
+        inputBox.classList.add('hidden');
+        revealBox.classList.remove('hidden');
+
+        document.getElementById('revealHostName').textContent = state.hostName;
+        document.getElementById('revealGuestName').textContent = state.guestName;
+        document.getElementById('revealHostWord').textContent = state.hostWord;
+        document.getElementById('revealGuestWord').textContent = state.guestWord;
+
+        const yesCount = (state.hostVote === true ? 1 : 0) + (state.guestVote === true ? 1 : 0);
+        document.getElementById('similarCountText').textContent = `${yesCount}/2`;
+
+        if (state.status === 'similar_step') {
+          voteArea.classList.add('hidden');
+          similarArea.classList.remove('hidden');
+        } else {
+          voteArea.classList.remove('hidden');
+          similarArea.classList.add('hidden');
+        }
+      }
+
+      renderRoundsList('liveHistoryContainer', state.history, true);
+    }
+
+    // 渲染轮数词汇列表（下方实时历史 & 最终结算长图共用）
+    function renderRoundsList(containerId, list, reverseOrder = false) {
+      const container = document.getElementById(containerId);
+      if (!list || list.length === 0) {
+        container.innerHTML = '<div class="text-center text-xs text-gray-400 py-4">第 1 轮结束后将在此处展示双方历史词汇</div>';
+        return;
+      }
+
+      const items = reverseOrder ? [...list].reverse() : list;
+      container.innerHTML = items.map(item => `
+        <div class="space-y-1">
+          <div class="text-[11px] text-gray-400 font-medium">第 ${item.round} 轮</div>
+          <div class="flex items-center space-x-2">
+            <div class="flex-1 py-2.5 px-3 rounded-lg word-left text-center font-bold text-xs break-all">
+              ${escapeHtml(item.hostWord)}
+            </div>
+            <span class="text-xs font-bold ${item.matched ? 'text-emerald-500' : 'text-gray-300'}">
+              ${item.matched ? '✓' : '×'}
+            </span>
+            <div class="flex-1 py-2.5 px-3 rounded-lg word-right text-center font-bold text-xs break-all">
+              ${escapeHtml(item.guestWord)}
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderSummaryView() {
+      const total = state.history.length;
+      document.getElementById('summarySubTitle').textContent = `用了 ${total} 轮，我们都想到了「${state.finalWord}」`;
+      document.getElementById('summaryMetaInfo').textContent = `房间 ${roomCode} · 共 ${total} 轮 · ${state.finishDate}`;
+      renderRoundsList('summaryRoundsList', state.history, false);
+    }
+
+    function playAgainInRoom() {
+      if (isHost) {
+        startNewGame();
+      } else {
+        alert('请等待房主点击“再来一局”开启新一轮');
+      }
+    }
+
+    function backToHome() {
+      location.reload();
+    }
+
+    // 保存真实历史对局到浏览器本地存储
+    function saveFinishedGameLocally() {
+      const key = 'word_meet_history_v1';
+      const existing = JSON.parse(localStorage.getItem(key) || '[]');
+      const recordId = `${roomCode}_${state.history.length}_${state.finalWord}`;
+      if (!existing.some(r => r.id === recordId)) {
+        existing.unshift({
+          id: recordId,
+          roomCode,
+          totalRounds: state.history.length,
+          finalWord: state.finalWord,
+          finishDate: state.finishDate,
+          hostName: state.hostName,
+          guestName: state.guestName,
+          history: state.history
+        });
+        localStorage.setItem(key, JSON.stringify(existing.slice(0, 20)));
+      }
+      renderSavedGames();
+    }
+
+    function renderSavedGames() {
+      const key = 'word_meet_history_v1';
+      const existing = JSON.parse(localStorage.getItem(key) || '[]');
+      const box = document.getElementById('savedGamesList');
+      if (existing.length === 0) {
+        box.innerHTML = '<div class="text-gray-400 py-2">暂无历史对局，快和朋友开始第一局吧！</div>';
+        return;
+      }
+      box.innerHTML = existing.map((item, idx) => `
+        <div onclick="viewSavedGame(${idx})" class="p-3 rounded-xl bg-gray-50 hover:bg-indigo-50 cursor-pointer flex justify-between items-center transition">
+          <div>
+            <div class="font-bold text-gray-800 text-xs">「${escapeHtml(item.finalWord)}」 · 共 ${item.totalRounds} 轮</div>
+            <div class="text-[11px] text-gray-400">${escapeHtml(item.hostName)} & ${escapeHtml(item.guestName)} · 房间 ${item.roomCode}</div>
+          </div>
+          <span class="text-indigo-600 text-xs font-medium">查看长图 →</span>
+        </div>
+      `).join('');
+    }
+
+    function viewSavedGame(idx) {
+      const existing = JSON.parse(localStorage.getItem('word_meet_history_v1') || '[]');
+      const item = existing[idx];
+      if (!item) return;
+      roomCode = item.roomCode;
+      state.history = item.history;
+      state.finalWord = item.finalWord;
+      state.finishDate = item.finishDate;
+      document.getElementById('btnPlayAgain').classList.add('hidden');
+      renderSummaryView();
+      showSection('viewSummary');
+    }
+
+    function clearSavedGames() {
+      localStorage.removeItem('word_meet_history_v1');
+      renderSavedGames();
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, s => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[s]));
+    }
+  </script>
+</body>
+</html>
